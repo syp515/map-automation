@@ -1,13 +1,29 @@
-name: Weekly Map Data Update
+name: Weekly Map Data Update (Per Province)
 
 on:
   schedule:
-    # 每周日凌晨 2:00 (UTC) 运行
+    # 每周日凌晨 2:00 运行
     - cron: '0 2 * * 0'
   workflow_dispatch:   # 允许手动触发
 
 jobs:
-  build:
+  generate-province-map:
+    strategy:
+      matrix:
+        # 列出你要处理的所有省份（代码与 Geofabrik 子目录一致）
+        province: [
+          beijing, shanghai, guangdong, zhejiang, jiangsu,
+          fujian, shandong, hebei, henan, sichuan,
+          hubei, hunan, liaoning, anhui, jiangxi,
+          shaanxi, heilongjiang, yunnan, guangxi, jilin,
+          shanxi, gansu, guizhou, hainan, ningxia,
+          qinghai, xinjiang, tibet, hong-kong, macau,
+          taiwan, inner-mongolia, chongqing
+          # 注意：Inner Mongolia 是中国的一个自治区，位于北部，不是省份
+        ]
+      # 可选：限制最大并发数，避免消耗过多资源
+      max-parallel: 5
+
     runs-on: ubuntu-latest
 
     steps:
@@ -19,35 +35,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y osmium-tool tilemaker gdal-bin
 
-      - name: Download latest China OSM data
+      - name: Download OSM data for ${{ matrix.province }}
         run: |
-          # 这里以下载中国区全量数据为例，你可以改为分省数据
-          wget https://download.geofabrik.de/asia/china-latest.osm.pbf -O china-latest.osm.pbf
+          wget https://download.geofabrik.de/asia/china/${{ matrix.province }}-latest.osm.pbf -O input.osm.pbf
 
       - name: Generate vector tiles with Tilemaker
         run: |
-          tilemaker china-latest.osm.pbf \
-            --output china.mbtiles \
+          tilemaker input.osm.pbf \
+            --output ${{ matrix.province }}.mbtiles \
             --config config.json \
             --process process.lua
 
       - name: Extract POI database (optional)
         run: |
-          ogr2ogr -f SQLITE -dsco SPATIALITE=YES pois.sqlite china-latest.osm.pbf points
+          ogr2ogr -f SQLITE -dsco SPATIALITE=YES ${{ matrix.province }}_pois.sqlite input.osm.pbf points
 
       - name: Package files
         run: |
-          tar -czf map-data-$(date +'%Y%m%d').tar.gz china.mbtiles pois.sqlite
+          tar -czf ${{ matrix.province }}-map-$(date +'%Y%m%d').tar.gz ${{ matrix.province }}.mbtiles ${{ matrix.province }}_pois.sqlite
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: data-${{ github.run_number }}
-          name: Map Data Update ${{ github.run_number }}
+          # 为每个省份创建单独的 release（用省份名作为 tag 前缀）
+          tag_name: ${{ matrix.province }}-data-${{ github.run_number }}
+          name: "${{ matrix.province }} Map Data Update ${{ github.run_number }}"
           body: |
-            Auto-updated map data from OSM.
+            Auto-updated map data for ${{ matrix.province }} from OSM.
             - Date: ${{ github.event.repository.updated_at }}
             - Source: Geofabrik China Extract
-          files: map-data-*.tar.gz
+          files: ${{ matrix.province }}-map-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

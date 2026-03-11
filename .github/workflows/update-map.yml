@@ -1,0 +1,53 @@
+name: Weekly Map Data Update
+
+on:
+  schedule:
+    # 每周日凌晨 2:00 (UTC) 运行
+    - cron: '0 2 * * 0'
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool tilemaker gdal-bin
+
+      - name: Download latest China OSM data
+        run: |
+          # 这里以下载中国区全量数据为例，你可以改为分省数据
+          wget https://download.geofabrik.de/asia/china-latest.osm.pbf -O china-latest.osm.pbf
+
+      - name: Generate vector tiles with Tilemaker
+        run: |
+          tilemaker china-latest.osm.pbf \
+            --output china.mbtiles \
+            --config config.json \
+            --process process.lua
+
+      - name: Extract POI database (optional)
+        run: |
+          ogr2ogr -f SQLITE -dsco SPATIALITE=YES pois.sqlite china-latest.osm.pbf points
+
+      - name: Package files
+        run: |
+          tar -czf map-data-$(date +'%Y%m%d').tar.gz china.mbtiles pois.sqlite
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: data-${{ github.run_number }}
+          name: Map Data Update ${{ github.run_number }}
+          body: |
+            Auto-updated map data from OSM.
+            - Date: ${{ github.event.repository.updated_at }}
+            - Source: Geofabrik China Extract
+          files: map-data-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
